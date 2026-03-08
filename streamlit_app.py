@@ -1,106 +1,122 @@
-import streamlit as st
+# streamlit_app.py
+
+import io
 import pandas as pd
-from supabase import create_client, Client
-from typing import Optional
+import streamlit as st
 
 st.set_page_config(
-    page_title="Control de Votación",
+    page_title="Base de datos electoral online",
     page_icon="🗳️",
     layout="wide"
 )
 
-# =========================
-# CONFIGURACIÓN SUPABASE
-# =========================
-@st.cache_resource
-def get_supabase() -> Client:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
-
-supabase = get_supabase()
-TABLE_NAME = "votacion"
-
-# =========================
-# FUNCIONES CRUD
-# =========================
-def cargar_datos() -> pd.DataFrame:
-    response = (
-        supabase.table(TABLE_NAME)
-        .select("*")
-        .order("id", desc=False)
-        .execute()
-    )
-    data = response.data if response.data else []
-    return pd.DataFrame(data)
-
-def insertar_registro(lugar: str, mesa: str, votos_blanco: int, votos_nulo: int):
-    payload = {
-        "lugar_votacion": lugar,
-        "mesa": mesa,
-        "votos_blanco": votos_blanco,
-        "votos_nulo": votos_nulo,
-    }
-    return supabase.table(TABLE_NAME).insert(payload).execute()
-
-def actualizar_registro(registro_id: int, lugar: str, mesa: str, votos_blanco: int, votos_nulo: int):
-    payload = {
-        "lugar_votacion": lugar,
-        "mesa": mesa,
-        "votos_blanco": votos_blanco,
-        "votos_nulo": votos_nulo,
-    }
-    return (
-        supabase.table(TABLE_NAME)
-        .update(payload)
-        .eq("id", registro_id)
-        .execute()
-    )
-
-def eliminar_registro(registro_id: int):
-    return (
-        supabase.table(TABLE_NAME)
-        .delete()
-        .eq("id", registro_id)
-        .execute()
-    )
-
-# =========================
-# INTERFAZ
-# =========================
 st.title("🗳️ Base de datos electoral online")
-st.caption("Registro y edición de Lugar de votación, Mesa, Votos en blanco y Votos nulo")
+st.caption("Editable desde Streamlit Cloud, sin SQL")
 
-tab1, tab2, tab3 = st.tabs(["📋 Ver registros", "➕ Agregar registro", "✏️ Editar / Eliminar"])
+COLUMNAS = ["Lugar de votación", "Mesa", "Votos en blanco", "Votos nulo"]
+
+def dataframe_inicial() -> pd.DataFrame:
+    return pd.DataFrame(columns=COLUMNAS)
+
+if "df" not in st.session_state:
+    st.session_state.df = dataframe_inicial()
+
+with st.sidebar:
+    st.header("Opciones")
+
+    archivo = st.file_uploader(
+        "Cargar base en CSV o Excel",
+        type=["csv", "xlsx"]
+    )
+
+    if archivo is not None:
+        try:
+            if archivo.name.endswith(".csv"):
+                df_cargado = pd.read_csv(archivo)
+            else:
+                df_cargado = pd.read_excel(archivo)
+
+            for col in COLUMNAS:
+                if col not in df_cargado.columns:
+                    df_cargado[col] = ""
+
+            df_cargado = df_cargado[COLUMNAS].copy()
+            df_cargado["Votos en blanco"] = pd.to_numeric(
+                df_cargado["Votos en blanco"], errors="coerce"
+            ).fillna(0).astype(int)
+            df_cargado["Votos nulo"] = pd.to_numeric(
+                df_cargado["Votos nulo"], errors="coerce"
+            ).fillna(0).astype(int)
+
+            st.session_state.df = df_cargado
+            st.success("Base cargada correctamente.")
+        except Exception as e:
+            st.error(f"Error al cargar archivo: {e}")
+
+    if st.button("Nueva base vacía"):
+        st.session_state.df = dataframe_inicial()
+        st.success("Se creó una base vacía.")
+
+    if st.button("Limpiar todo"):
+        st.session_state.df = dataframe_inicial()
+        st.warning("Se eliminaron los datos actuales.")
+
+tab1, tab2, tab3 = st.tabs(
+    ["📋 Base editable", "➕ Agregar registro", "⬇️ Descargar"]
+)
 
 with tab1:
-    st.subheader("Registros actuales")
-    df = cargar_datos()
+    st.subheader("Editar datos en línea")
 
-    if df.empty:
-        st.info("No hay registros guardados todavía.")
-    else:
-        columnas_mostrar = ["id", "lugar_votacion", "mesa", "votos_blanco", "votos_nulo"]
-        st.dataframe(df[columnas_mostrar], use_container_width=True)
+    df_editado = st.data_editor(
+        st.session_state.df,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Lugar de votación": st.column_config.TextColumn(
+                "Lugar de votación",
+                required=True
+            ),
+            "Mesa": st.column_config.TextColumn(
+                "Mesa",
+                required=True
+            ),
+            "Votos en blanco": st.column_config.NumberColumn(
+                "Votos en blanco",
+                min_value=0,
+                step=1,
+                format="%d"
+            ),
+            "Votos nulo": st.column_config.NumberColumn(
+                "Votos nulo",
+                min_value=0,
+                step=1,
+                format="%d"
+            ),
+        }
+    )
 
-        total_blanco = int(df["votos_blanco"].fillna(0).sum())
-        total_nulo = int(df["votos_nulo"].fillna(0).sum())
+    df_editado["Votos en blanco"] = pd.to_numeric(
+        df_editado["Votos en blanco"], errors="coerce"
+    ).fillna(0).astype(int)
+    df_editado["Votos nulo"] = pd.to_numeric(
+        df_editado["Votos nulo"], errors="coerce"
+    ).fillna(0).astype(int)
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total registros", len(df))
-        c2.metric("Total votos en blanco", total_blanco)
-        c3.metric("Total votos nulo", total_nulo)
+    st.session_state.df = df_editado.copy()
 
-        csv = df[columnas_mostrar].to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "⬇️ Descargar CSV",
-            data=csv,
-            file_name="base_votacion.csv",
-            mime="text/csv"
-        )
+    total_registros = len(st.session_state.df)
+    total_blanco = int(st.session_state.df["Votos en blanco"].sum()) if total_registros else 0
+    total_nulo = int(st.session_state.df["Votos nulo"].sum()) if total_registros else 0
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total registros", total_registros)
+    c2.metric("Total votos en blanco", total_blanco)
+    c3.metric("Total votos nulo", total_nulo)
 
 with tab2:
-    st.subheader("Agregar nuevo registro")
+    st.subheader("Agregar registro manualmente")
 
     with st.form("form_agregar", clear_on_submit=True):
         lugar = st.text_input("Lugar de votación")
@@ -112,88 +128,47 @@ with tab2:
 
         if guardar:
             if not lugar.strip():
-                st.error("Debes escribir el lugar de votación.")
+                st.error("Debes ingresar el lugar de votación.")
             elif not mesa.strip():
-                st.error("Debes escribir la mesa.")
+                st.error("Debes ingresar la mesa.")
             else:
-                try:
-                    insertar_registro(
-                        lugar=lugar.strip(),
-                        mesa=mesa.strip(),
-                        votos_blanco=int(votos_blanco),
-                        votos_nulo=int(votos_nulo),
-                    )
-                    st.success("Registro guardado correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al guardar: {e}")
+                nuevo = pd.DataFrame([{
+                    "Lugar de votación": lugar.strip(),
+                    "Mesa": mesa.strip(),
+                    "Votos en blanco": int(votos_blanco),
+                    "Votos nulo": int(votos_nulo),
+                }])
+
+                st.session_state.df = pd.concat(
+                    [st.session_state.df, nuevo],
+                    ignore_index=True
+                )
+                st.success("Registro agregado correctamente.")
 
 with tab3:
-    st.subheader("Editar o eliminar registro")
-    df = cargar_datos()
+    st.subheader("Descargar base de datos")
 
-    if df.empty:
-        st.warning("No hay registros para editar o eliminar.")
-    else:
-        opciones = {
-            f'ID {row["id"]} | {row["lugar_votacion"]} | Mesa {row["mesa"]}': row["id"]
-            for _, row in df.iterrows()
-        }
+    csv_data = st.session_state.df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Descargar CSV",
+        data=csv_data,
+        file_name="base_votacion.csv",
+        mime="text/csv"
+    )
 
-        seleccion = st.selectbox("Selecciona un registro", list(opciones.keys()))
-        registro_id = opciones[seleccion]
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        st.session_state.df.to_excel(writer, index=False, sheet_name="Base")
+    excel_data = buffer.getvalue()
 
-        fila = df[df["id"] == registro_id].iloc[0]
+    st.download_button(
+        label="Descargar Excel",
+        data=excel_data,
+        file_name="base_votacion.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-        with st.form("form_editar"):
-            lugar_edit = st.text_input("Lugar de votación", value=str(fila["lugar_votacion"]))
-            mesa_edit = st.text_input("Mesa", value=str(fila["mesa"]))
-            votos_blanco_edit = st.number_input(
-                "Votos en blanco",
-                min_value=0,
-                step=1,
-                value=int(fila["votos_blanco"])
-            )
-            votos_nulo_edit = st.number_input(
-                "Votos nulo",
-                min_value=0,
-                step=1,
-                value=int(fila["votos_nulo"])
-            )
-
-            col1, col2 = st.columns(2)
-            actualizar = col1.form_submit_button("Actualizar")
-            borrar = col2.form_submit_button("Eliminar")
-
-            if actualizar:
-                try:
-                    actualizar_registro(
-                        registro_id=registro_id,
-                        lugar=lugar_edit.strip(),
-                        mesa=mesa_edit.strip(),
-                        votos_blanco=int(votos_blanco_edit),
-                        votos_nulo=int(votos_nulo_edit),
-                    )
-                    st.success("Registro actualizado correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al actualizar: {e}")
-
-            if borrar:
-                try:
-                    eliminar_registro(registro_id)
-                    st.success("Registro eliminado correctamente.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al eliminar: {e}")
-
-st.divider()
-st.markdown("### Campos de la base")
-st.write(
-    {
-        "lugar_votacion": "Texto",
-        "mesa": "Texto",
-        "votos_blanco": "Número entero",
-        "votos_nulo": "Número entero",
-    }
+st.info(
+    "Esta versión funciona solo dentro de la sesión activa de Streamlit Cloud. "
+    "Para conservar cambios de forma permanente sin base de datos, debes cargar un archivo y volver a descargarlo."
 )
