@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 st.title("🗳️ Base de datos electoral online")
-st.caption("Editable desde Streamlit Cloud, sin SQL, con votos por agrupación")
+
 
 # =========================
 # CONFIGURACIÓN DE COLUMNAS
