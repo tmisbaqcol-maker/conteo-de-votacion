@@ -11,16 +11,67 @@ st.set_page_config(
 )
 
 st.title("🗳️ Base de datos electoral online")
-st.caption("Editable desde Streamlit Cloud, sin SQL")
+st.caption("Editable desde Streamlit Cloud, sin SQL, con votos por agrupación")
 
-COLUMNAS = ["Lugar de votación", "Mesa", "Votos en blanco", "Votos nulo"]
+# =========================
+# CONFIGURACIÓN DE COLUMNAS
+# =========================
+AGRUPACIONES = [
+    "Pacto Historico",
+    "Partido Liberal",
+    "Partido Conservador",
+    "Partido de la U",
+    "Cambio Radical",
+    "Centro Democratico",
+    "Comunes",
+    "MIRA",
+    "ASI",
+    "AICO",
+]
 
+COLUMNAS_BASE = [
+    "Lugar de votación",
+    "Mesa",
+    "Votos en blanco",
+    "Votos nulo"
+]
+
+COLUMNAS = COLUMNAS_BASE + AGRUPACIONES
+
+# =========================
+# FUNCIONES
+# =========================
 def dataframe_inicial() -> pd.DataFrame:
     return pd.DataFrame(columns=COLUMNAS)
 
+def normalizar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    for col in COLUMNAS:
+        if col not in df.columns:
+            if col in ["Lugar de votación", "Mesa"]:
+                df[col] = ""
+            else:
+                df[col] = 0
+
+    df = df[COLUMNAS].copy()
+
+    columnas_numericas = [col for col in COLUMNAS if col not in ["Lugar de votación", "Mesa"]]
+    for col in columnas_numericas:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+
+    df["Lugar de votación"] = df["Lugar de votación"].fillna("").astype(str)
+    df["Mesa"] = df["Mesa"].fillna("").astype(str)
+
+    return df
+
+# =========================
+# ESTADO DE SESIÓN
+# =========================
 if "df" not in st.session_state:
     st.session_state.df = dataframe_inicial()
 
+# =========================
+# SIDEBAR
+# =========================
 with st.sidebar:
     st.header("Opciones")
 
@@ -36,19 +87,7 @@ with st.sidebar:
             else:
                 df_cargado = pd.read_excel(archivo)
 
-            for col in COLUMNAS:
-                if col not in df_cargado.columns:
-                    df_cargado[col] = ""
-
-            df_cargado = df_cargado[COLUMNAS].copy()
-            df_cargado["Votos en blanco"] = pd.to_numeric(
-                df_cargado["Votos en blanco"], errors="coerce"
-            ).fillna(0).astype(int)
-            df_cargado["Votos nulo"] = pd.to_numeric(
-                df_cargado["Votos nulo"], errors="coerce"
-            ).fillna(0).astype(int)
-
-            st.session_state.df = df_cargado
+            st.session_state.df = normalizar_dataframe(df_cargado)
             st.success("Base cargada correctamente.")
         except Exception as e:
             st.error(f"Error al cargar archivo: {e}")
@@ -61,60 +100,87 @@ with st.sidebar:
         st.session_state.df = dataframe_inicial()
         st.warning("Se eliminaron los datos actuales.")
 
+# =========================
+# TABS
+# =========================
 tab1, tab2, tab3 = st.tabs(
     ["📋 Base editable", "➕ Agregar registro", "⬇️ Descargar"]
 )
 
+# =========================
+# TAB 1: EDITAR
+# =========================
 with tab1:
     st.subheader("Editar datos en línea")
 
+    column_config = {
+        "Lugar de votación": st.column_config.TextColumn(
+            "Lugar de votación",
+            required=True
+        ),
+        "Mesa": st.column_config.TextColumn(
+            "Mesa",
+            required=True
+        ),
+        "Votos en blanco": st.column_config.NumberColumn(
+            "Votos en blanco",
+            min_value=0,
+            step=1,
+            format="%d"
+        ),
+        "Votos nulo": st.column_config.NumberColumn(
+            "Votos nulo",
+            min_value=0,
+            step=1,
+            format="%d"
+        ),
+    }
+
+    for agrupacion in AGRUPACIONES:
+        column_config[agrupacion] = st.column_config.NumberColumn(
+            agrupacion,
+            min_value=0,
+            step=1,
+            format="%d"
+        )
+
     df_editado = st.data_editor(
-        st.session_state.df,
+        normalizar_dataframe(st.session_state.df),
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "Lugar de votación": st.column_config.TextColumn(
-                "Lugar de votación",
-                required=True
-            ),
-            "Mesa": st.column_config.TextColumn(
-                "Mesa",
-                required=True
-            ),
-            "Votos en blanco": st.column_config.NumberColumn(
-                "Votos en blanco",
-                min_value=0,
-                step=1,
-                format="%d"
-            ),
-            "Votos nulo": st.column_config.NumberColumn(
-                "Votos nulo",
-                min_value=0,
-                step=1,
-                format="%d"
-            ),
-        }
+        column_config=column_config
     )
 
-    df_editado["Votos en blanco"] = pd.to_numeric(
-        df_editado["Votos en blanco"], errors="coerce"
-    ).fillna(0).astype(int)
-    df_editado["Votos nulo"] = pd.to_numeric(
-        df_editado["Votos nulo"], errors="coerce"
-    ).fillna(0).astype(int)
-
+    df_editado = normalizar_dataframe(df_editado)
     st.session_state.df = df_editado.copy()
 
     total_registros = len(st.session_state.df)
     total_blanco = int(st.session_state.df["Votos en blanco"].sum()) if total_registros else 0
     total_nulo = int(st.session_state.df["Votos nulo"].sum()) if total_registros else 0
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total registros", total_registros)
-    c2.metric("Total votos en blanco", total_blanco)
-    c3.metric("Total votos nulo", total_nulo)
+    columnas_agrupaciones = AGRUPACIONES
+    total_agrupaciones = int(st.session_state.df[columnas_agrupaciones].sum().sum()) if total_registros else 0
+    total_general = total_blanco + total_nulo + total_agrupaciones
 
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total registros", total_registros)
+    c2.metric("Votos en blanco", total_blanco)
+    c3.metric("Votos nulo", total_nulo)
+    c4.metric("Total votos agrupaciones", total_agrupaciones)
+
+    st.markdown("### Totales por agrupación")
+    resumen = pd.DataFrame({
+        "Agrupación": AGRUPACIONES,
+        "Total votos": [int(st.session_state.df[col].sum()) for col in AGRUPACIONES]
+    })
+    st.dataframe(resumen, use_container_width=True, hide_index=True)
+
+    st.metric("Total general registrado", total_general)
+
+# =========================
+# TAB 2: AGREGAR REGISTRO
+# =========================
 with tab2:
     st.subheader("Agregar registro manualmente")
 
@@ -124,6 +190,21 @@ with tab2:
         votos_blanco = st.number_input("Votos en blanco", min_value=0, step=1, value=0)
         votos_nulo = st.number_input("Votos nulo", min_value=0, step=1, value=0)
 
+        st.markdown("### Votos por agrupación")
+
+        valores_agrupaciones = {}
+        col1, col2 = st.columns(2)
+
+        for i, agrupacion in enumerate(AGRUPACIONES):
+            with col1 if i % 2 == 0 else col2:
+                valores_agrupaciones[agrupacion] = st.number_input(
+                    agrupacion,
+                    min_value=0,
+                    step=1,
+                    value=0,
+                    key=f"agr_{agrupacion}"
+                )
+
         guardar = st.form_submit_button("Guardar registro")
 
         if guardar:
@@ -132,23 +213,34 @@ with tab2:
             elif not mesa.strip():
                 st.error("Debes ingresar la mesa.")
             else:
-                nuevo = pd.DataFrame([{
+                nuevo_registro = {
                     "Lugar de votación": lugar.strip(),
                     "Mesa": mesa.strip(),
                     "Votos en blanco": int(votos_blanco),
                     "Votos nulo": int(votos_nulo),
-                }])
+                }
+
+                for agrupacion in AGRUPACIONES:
+                    nuevo_registro[agrupacion] = int(valores_agrupaciones[agrupacion])
+
+                nuevo = pd.DataFrame([nuevo_registro])
 
                 st.session_state.df = pd.concat(
-                    [st.session_state.df, nuevo],
+                    [normalizar_dataframe(st.session_state.df), nuevo],
                     ignore_index=True
                 )
                 st.success("Registro agregado correctamente.")
+                st.rerun()
 
+# =========================
+# TAB 3: DESCARGAR
+# =========================
 with tab3:
     st.subheader("Descargar base de datos")
 
-    csv_data = st.session_state.df.to_csv(index=False).encode("utf-8")
+    df_descarga = normalizar_dataframe(st.session_state.df)
+
+    csv_data = df_descarga.to_csv(index=False).encode("utf-8")
     st.download_button(
         label="Descargar CSV",
         data=csv_data,
@@ -158,7 +250,14 @@ with tab3:
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        st.session_state.df.to_excel(writer, index=False, sheet_name="Base")
+        df_descarga.to_excel(writer, index=False, sheet_name="Base")
+
+        resumen = pd.DataFrame({
+            "Agrupación": AGRUPACIONES,
+            "Total votos": [int(df_descarga[col].sum()) for col in AGRUPACIONES]
+        })
+        resumen.to_excel(writer, index=False, sheet_name="Resumen")
+
     excel_data = buffer.getvalue()
 
     st.download_button(
